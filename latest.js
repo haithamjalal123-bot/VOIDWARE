@@ -1,4 +1,4 @@
-/* VOIDWARE V18.7 • PURPLE VOID AIM CHAMS • STUDIO UI • 15 NEW TOOLS • 200 NEW POWERS • PRESERVES V13.1 PARADOX AND +15 ABILITIES + ADVANCED WEAPON FUSION + ALL LEGACY FEATURES - 100 new powers across 10 labs, plus Rocket Recoil, Omega and legacy features | Clutcher.io LOCAL BOT LAB | 2026-10-17
+/* VOIDWARE V18.8 • CONTROLLED AIR STRAFE • STUDIO UI • 15 NEW TOOLS • 200 NEW POWERS • PRESERVES V13.1 PARADOX AND +15 ABILITIES + ADVANCED WEAPON FUSION + ALL LEGACY FEATURES - 100 new powers across 10 labs, plus Rocket Recoil, Omega and legacy features | Clutcher.io LOCAL BOT LAB | 2026-10-17
    Paste this entire file once into DevTools Console while in a bot match.
    U = menu, V14 tabs in top navigation, P = Rage tab, Q = Mega Rage, I = bot wipe, V = wallbang, End = emergency off.
    All feature/action hotkeys can be reassigned in the HOTKEYS tab.
@@ -309,7 +309,7 @@
   let modelAppliedStyle='original', modelMaterials=new Map(), avatarBaseScale=null;
 
   let rageFov = 90, targetMode = 'crosshair', thirdDistance = 3.65, thirdHeight = .38;
-  let fireRate=22, gravityScale=1, flySpeed=46, flyBoost=2.5, flySmooth=14, blinkDistance=15, airSteer=16, airMaxSpeed=26, legitFov=38, legitStrength=22, triggerRadius=.36;
+  let fireRate=22, gravityScale=1, flySpeed=46, flyBoost=2.5, flySmooth=14, blinkDistance=15, airSteer=14, airMaxSpeed=11, legitFov=38, legitStrength=22, triggerRadius=.36;
   // V11.1 ROCKET RECOIL - velocity impulse opposite the view direction on confirmed shots.
   let rocketPower=24, rocketVertical=1, rocketMaxSpeed=145, rocketShots=0;
   const rocketSettingsKey='deathWonRocketV11_1';
@@ -320,6 +320,13 @@
     if(Number.isFinite(rs.max))rocketMaxSpeed=Math.max(20,Math.min(240,rs.max));
   } catch {}
   function saveRocket(){try{localStorage.setItem(rocketSettingsKey,JSON.stringify({power:rocketPower,vertical:rocketVertical,max:rocketMaxSpeed}))}catch{}}
+  const strafeCfgKey='voidwareV18_8_controlledStrafe';
+  try{
+    const x=JSON.parse(localStorage.getItem(strafeCfgKey)||'{}');
+    if(Number.isFinite(+x.steer))airSteer=Math.max(2,Math.min(25,+x.steer));
+    if(Number.isFinite(+x.cap))airMaxSpeed=Math.max(6,Math.min(30,+x.cap));
+  }catch{}
+  const strafeSave=()=>{try{localStorage.setItem(strafeCfgKey,JSON.stringify({steer:airSteer,cap:airMaxSpeed}))}catch{}};
   let flightVel={x:0,y:0,z:0}, prevStrafeYaw=null, blinkUndo=null, checkpoint=null;
   let aimActivation='mouse2', aimBone='upper', triggerDelay=90, triggerOnset=0, triggerPrev=null;
   let flickFov=360, flickMaxDist=150, flickFiring=false; // O = original instant, Shift+O = smooth head flick
@@ -910,7 +917,7 @@
 
   document.head.append(style);
   const panel = document.createElement('div');panel.id='death-won-panel';
-  panel.innerHTML = `<div class="dw-top"><div class="dw-mark">V</div><div><div class="dw-title">VOID<b>WARE</b></div><div class="dw-sub">VOIDWARE V18.7 <span class="dw-dot">·</span> Studio edition</div></div>
+  panel.innerHTML = `<div class="dw-top"><div class="dw-mark">V</div><div><div class="dw-title">VOID<b>WARE</b></div><div class="dw-sub">VOIDWARE V18.8 <span class="dw-dot">·</span> Studio edition</div></div>
     <div class="dw-topright"><span class="dw-online" id="dw-bot-status">● LOCAL MATCH</span><button class="dw-head-btn" id="dw-open-home" title="Home dashboard">Home</button><span class="dw-version">v18.2</span><button class="dw-x" id="dw-close" title="Close menu">×</button></div></div>
     <div class="dw-superbar" role="navigation" aria-label="Main categories"><div class="dw-topcats" id="dw-topcats"></div><span class="dw-supermeta">Local bot sandbox</span></div>
     <div class="dw-subbar" role="navigation" aria-label="Category sub-tabs">
@@ -2017,23 +2024,41 @@
     // Avoid automatic fall-reset when flying below the map.
     p._safeX=p.x;p._safeY=p.y;p._safeZ=p.z;
   }
+  // V18.8: Preserve native movement speed; steer existing air momentum only.
+  // No velocity pumping, forced forward acceleration or Movement Speed multiplier.
+  // Airborne A/D works even after the jump key is released.
   function applyAirStrafe(p,dt,input){
-    if(!flags.autoStrafe||!p.alive||p.onGround||p.onLadder||flags.fly || !actionDown(input,'jump'))return;
-    const yaw=p.yaw||0,fw=Number(actionDown(input,'forward'))-Number(actionDown(input,'back'));
-    let side=Number(actionDown(input,'right'))-Number(actionDown(input,'left'));
+    if(!flags.autoStrafe||!p.alive||p.onGround||p.onLadder||flags.fly)return;
+    if(!Number.isFinite(dt)||dt<=0||dt>.2)return;
+    let vx=Number(p.vx),vz=Number(p.vz);
+    if(!Number.isFinite(vx)||!Number.isFinite(vz))return;
+    let velocity=Math.hypot(vx,vz);
+    const cap=Math.max(6,Math.min(30,airMaxSpeed));
+    // Clamp even with no directional input, preventing runaway boosts on landing loops.
+    if(velocity>cap){const f=cap/velocity;vx*=f;vz*=f;velocity=cap;
+      p.vx=vx;p.vz=vz;
+    }
+    // From a standstill, never manufacture momentum.
+    if(velocity<.35)return;
+    const yaw=Number(p.yaw)||0;
+    const fw=Number(actionDown(input,'forward'))-Number(actionDown(input,'back'));
+    const side=Number(actionDown(input,'right'))-Number(actionDown(input,'left'));
     const turn=prevStrafeYaw===null?0:Math.atan2(Math.sin(yaw-prevStrafeYaw),Math.cos(yaw-prevStrafeYaw));
-    if(!side && Math.abs(turn)>.001)side=Math.sign(turn)*Math.min(1,Math.abs(turn)/.04);
-    const forward=Math.abs(fw)+Math.abs(side)<.05?1:fw;
+    const turning=Math.abs(turn)>.0015;
+    // When turning the mouse, gently follow the new forward heading.
+    // No automatic forward motion just because the player is airborne.
+    if(!fw&&!side&&!(turning&&actionDown(input,'jump')))return;
+    const forward=fw||(!side&&turning?1:0);
     const sin=Math.sin(yaw),cos=Math.cos(yaw);
-    let dirX=-sin*forward+cos*side,dirZ=-cos*forward-sin*side;
-    const len=Math.hypot(dirX,dirZ)||1;dirX/=len;dirZ/=len;
-    const velocity=Math.hypot(p.vx||0,p.vz||0);
-    const target=Math.max(7,Math.min(85,airMaxSpeed*Math.min(speed,3)));
-    const wishX=dirX*target,wishZ=dirZ*target;
-    const steer=Math.min(.9,(1-Math.exp(-Math.max(1,airSteer)*dt))*(velocity>target?0.4:1));
-    p.vx+=(wishX-p.vx)*steer;p.vz+=(wishZ-p.vz)*steer;
-    const actual=Math.hypot(p.vx,p.vz);
-    if(actual>target){p.vx=p.vx/actual*target;p.vz=p.vz/actual*target}
+    const wishX=-sin*forward+cos*side,wishZ=-cos*forward-sin*side;
+    if(Math.hypot(wishX,wishZ)<.05)return;
+    const targetAngle=Math.atan2(wishZ,wishX);
+    const currentAngle=Math.atan2(vz,vx);
+    const delta=Math.atan2(Math.sin(targetAngle-currentAngle),Math.cos(targetAngle-currentAngle));
+    const maxTurn=Math.max(.5,Math.min(5.5,airSteer*.24))*Math.min(dt,.05);
+    const angle=currentAngle+Math.max(-maxTurn,Math.min(maxTurn,delta));
+    p.vx=Math.cos(angle)*velocity;
+    p.vz=Math.sin(angle)*velocity;
   }
   if(typeof originalPlayerUpdate==='function'){
     g.player.update=function(dt,input,...rest){
@@ -6483,7 +6508,7 @@
       section('Movement · HYPERDRIVE','Ground-safe Blink • full 3D Flight • stable airborne steering. Hold SPACE to bunnyhop.');
       const a=grid();
       tile(a,'🐇 Hold-Space BHOP','Only jumps again while you KEEP holding your jump key.',null,'autoBhop');
-      tile(a,'↔️ Adaptive Auto Strafe','Smoothly steers midair from WASD and mouse direction while holding SPACE.',null,'autoStrafe');
+      tile(a,'↔️ Controlled Auto Strafe','Steer in air with A/D or mouse turning. No automatic acceleration; horizontal speed is capped.',null,'autoStrafe');
       tile(a,'❤️ Auto Heal','Keep HP and armor topped up.',null,'god');
       tile(a,'🕊️ Hyper Flight','WASD freely · SPACE rises · CTRL descends · SHIFT is TURBO.',null,'fly');
       tile(a,'◈ Phase Mode','Flight can pass through walls. OFF = collision checked.',null,'flyNoclip');
@@ -6497,10 +6522,11 @@
       numericControl('Flight base speed',8,150,flySpeed,x=>flySpeed=x,'world units / sec');
       slider('Flight TURBO multiplier',1,5,.25,flyBoost,x=>flyBoost=x,'×');
       slider('Flight handling / response',4,35,1,flySmooth,x=>flySmooth=x,' /s');
-      slider('Air strafe response',2,35,1,airSteer,x=>airSteer=x,' /s');
-      slider('Air strafe max speed',8,75,1,airMaxSpeed,x=>airMaxSpeed=x,' u/s');
+      slider('Air strafe steering',2,25,1,airSteer,x=>{airSteer=x;strafeSave()},' /s');
+      slider('Air strafe speed cap',6,30,1,airMaxSpeed,x=>{airMaxSpeed=x;strafeSave()},' u/s');
       slider('Safe Blink distance',3,60,1,blinkDistance,x=>blinkDistance=x,' m');
       const a2=grid();tile(a2,'↺ Reset Speed','Restore normal movement multiplier.',()=>{speed=1;renderTab()});
+      tile(a2,'↔️ Reset Strafe','Restore stable strafe steering and safe airborne speed cap.',()=>{airSteer=14;airMaxSpeed=11;strafeSave();renderTab()});
       tile(a2,'🚀 Jump Boost','Give an upward boost immediately.',()=>{g.player.vy=Math.max(g.player.vy||0,9);g.player.onGround=false});
       tile(a2,'⚡ Air Dash','Launch forward at high speed.',airDash);
       tile(a2,'⏹ Emergency Airbrake','Stop horizontal momentum in the air.',airBrake);
@@ -6509,7 +6535,7 @@
       tile(a2,'↶ Blink Back','Return to the saved position before your last blink.',undoBlink);
       tile(a2,'◉ Save Checkpoint','Remember a safe position to return to.',saveCheckpoint);
       tile(a2,'↩ Return to Checkpoint','Go back to saved checkpoint if safe.',returnCheckpoint);
-      content.insertAdjacentHTML('beforeend','<p class="dw-desc dw-section">FLIGHT: WASD move · SPACE ascend · CTRL descend · hold SHIFT to boost. Air strafe smoothly follows mouse turning / A-D while SPACE is held (no random oscillation).</p>');
+      content.insertAdjacentHTML('beforeend','<p class="dw-desc dw-section">FLIGHT: WASD move · SPACE ascend · CTRL descend · hold SHIFT to boost. AUTO STRAFE: A/D controls direction in the air, including after releasing SPACE. Mouse turns also steer while holding forward or jump. It never adds speed, and the cap is separate from Movement Speed.</p>');
     } else if(activeTab==='guns'){
       section('Weapons & Skins','Give local weapons and apply visual colorways. Skins are previews, not permanent inventory items.');
       const weaponOptions=['ak47','m4a4','m4a1s','awp','ssg08','deagle','r8','glock','usps','p250','fiveseven','tec9','aug','sg553','galil','scar20','g3sg1','mp9','mac10','p90','negev','nova','xm1014','knife'].map(x=>[x,x.toUpperCase()]);
@@ -7278,7 +7304,7 @@
       rageEarlyReloadTick(now);
       if(flags.noRecoil)clearWeaponRecoil();
       // BHOP and air-strafe are now integrated in player.update before the physics step.
-      // Input always remains user-directed — no sine-wave strafe jitter.
+      // V18.8: Steering changes only direction; separate hard cap prevents runaway speed.
 
     }
     if(flags.third&&playing)ensureAvatar();
@@ -7371,6 +7397,6 @@
     panel.remove();curtain.remove();style.remove();esp.remove();cross.remove();flyHud.remove();v6Hud.remove();
     if(window.deathWon?.remove===remove)delete window.deathWon;
   }
-  window.deathWon={version:"18.7-VOIDWARE",voidChams:{settings:voidChamsCfg,save:voidChamsSave,get pending(){return voidCandidate?.name||null},get activated(){return voidReadyBot?.name||null},get meshes(){return bodyGlowMeshes.size}},radar:{aimedAt:radarCrosshairOn,elevation:radarElevationKind,coordinates:radarCoordinates,ray:radarSightRay,debug:()=>({on:flags.radar,arrows:flags.radarElevation,pulse:flags.radarAimPulse,bodyGlow:flags.aimBodyGlow,glowingMeshes:bodyGlowMeshes.size,los:flags.radarRequireLOS,corner:radarCorner,...radarStats,enemyPositions:enemyBots().slice(0,12).map(b=>({name:b.name||"Enemy",relative:radarCoordinates(b),elevation:radarElevationKind(b),crosshair:radarCrosshairOn(b)}))}),get threshold(){return radarHeightThreshold},get range(){return radarRange}},utility:{types:utilityTypes.map(t=>({id:t.id,flag:t.flag,title:t.title})),settings:utilitySettings,status:utilityStatus,refill:()=>utilityRefill(true),get live(){return {...utilityRuntime}}},v18Settings:v18,v18State,v18Render,v18Save,skinLab:{get inventory(){return sl.items.map(x=>({...x}))},get equipped(){return {...sl.equipped}},get catalogSize(){return slCatalog.length},get exterior(){return slExterior(sl.float)},add:(weapon,name,float,seed)=>slAdd(slMakeItem(weapon,name,float,seed)),equip:id=>slEquip(slFind(id)),remove:id=>slDelete(slFind(id)),preview:slPaintGame,armCase:()=>{slCaseArmed=true;return true},get caseArmed(){return slCaseArmed},get caseMode(){return slCaseMode},setCaseMode:v=>{slCaseMode=v==='reel'?'reel':'cover';sl.caseDisplayMode=slCaseMode;slSave()},get casePending(){return !!slCasePending},caseDemo:()=>slCaseStart('Arms Deal 2 Case',true,true),caseStart:()=>slCaseStart(slCaseLastTitle,false,slCaseMode==='cover'),caseClose:slCaseClose},v17Settings:v17,v17State,v17OnShot,v17OnDamage,v17ApplyAim,v17SaveAim,v17EquipLoadout,v17SaveLoadout,v17ExportConfig,v17ImportConfig,v17Cue,ragePlusDefs:ragePlusDefs.map(o=>({...o})),ragePlusCfg,ragePlusOff,get rageTargetName(){return rageFocus?.name||null;},smoothHeadFlick,get smoothFlickActive(){return !!smoothFlickJob},v16Options:v16Opts.map(o=>({id:o.flag,name:o.name,group:o.group,desc:o.desc})),v16Config:v16Cfg,v16Off,legitProOptions:legitProDefs.map(p=>({id:p.flag,name:p.name,desc:p.desc})),legitProSettings:legitProCfg,legitProState,legitProDisable,v15Powers:v15Powers.map(p=>({id:p.id,name:p.name,group:p.group,desc:p.desc})),v15Off,v14Powers:v14Catalog.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),v14Action:(id)=>{const p=v14ById.get(id);if(p?.mode==='action')v14RunPower(p);},v14Off:v14Disable,v14Settings:v14Cfg,paradox131Powers:v131Powers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradox131Action:v131Action,paradox131Off:v131Off,paradox131FusionEquip:v131EquipFusion,autoWin:paradoxAutoWin,paradoxPowers:paradoxPowers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradoxAction,paradoxOff,supernovaPowers:snPowers.map(p=>({...p})),supernovaAction:snAction,omegaPowers:omegaPowers.map(p=>({...p})),omegaAction,remove,flags,visibleHeadFlick,realityPowers:rePowers.map(p=>({...p})),realityAction:reDoAction,realityOff:reDisableAll,overdrivePowers:odPowers.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),usePower:id=>odAction(id),fpsBoost:on=>{if(!!flags.fpsBoost!==!!on)toggleFlag('fpsBoost')},open:showMenu,killBots,stopLegitLock,playKillSound:()=>playKillSound(false,true),get bindings(){return {...bindings}},setBinding,panicReset};
-  notice('VOIDWARE V18.7 loaded • Purple Void aim chams');
+  window.deathWon={version:"18.8-VOIDWARE",airStrafe:{get enabled(){return flags.autoStrafe},get steer(){return airSteer},get cap(){return airMaxSpeed},get horizontalSpeed(){return Math.hypot(g.player.vx||0,g.player.vz||0)},reset:()=>{airSteer=14;airMaxSpeed=11;strafeSave()}},voidChams:{settings:voidChamsCfg,save:voidChamsSave,get pending(){return voidCandidate?.name||null},get activated(){return voidReadyBot?.name||null},get meshes(){return bodyGlowMeshes.size}},radar:{aimedAt:radarCrosshairOn,elevation:radarElevationKind,coordinates:radarCoordinates,ray:radarSightRay,debug:()=>({on:flags.radar,arrows:flags.radarElevation,pulse:flags.radarAimPulse,bodyGlow:flags.aimBodyGlow,glowingMeshes:bodyGlowMeshes.size,los:flags.radarRequireLOS,corner:radarCorner,...radarStats,enemyPositions:enemyBots().slice(0,12).map(b=>({name:b.name||"Enemy",relative:radarCoordinates(b),elevation:radarElevationKind(b),crosshair:radarCrosshairOn(b)}))}),get threshold(){return radarHeightThreshold},get range(){return radarRange}},utility:{types:utilityTypes.map(t=>({id:t.id,flag:t.flag,title:t.title})),settings:utilitySettings,status:utilityStatus,refill:()=>utilityRefill(true),get live(){return {...utilityRuntime}}},v18Settings:v18,v18State,v18Render,v18Save,skinLab:{get inventory(){return sl.items.map(x=>({...x}))},get equipped(){return {...sl.equipped}},get catalogSize(){return slCatalog.length},get exterior(){return slExterior(sl.float)},add:(weapon,name,float,seed)=>slAdd(slMakeItem(weapon,name,float,seed)),equip:id=>slEquip(slFind(id)),remove:id=>slDelete(slFind(id)),preview:slPaintGame,armCase:()=>{slCaseArmed=true;return true},get caseArmed(){return slCaseArmed},get caseMode(){return slCaseMode},setCaseMode:v=>{slCaseMode=v==='reel'?'reel':'cover';sl.caseDisplayMode=slCaseMode;slSave()},get casePending(){return !!slCasePending},caseDemo:()=>slCaseStart('Arms Deal 2 Case',true,true),caseStart:()=>slCaseStart(slCaseLastTitle,false,slCaseMode==='cover'),caseClose:slCaseClose},v17Settings:v17,v17State,v17OnShot,v17OnDamage,v17ApplyAim,v17SaveAim,v17EquipLoadout,v17SaveLoadout,v17ExportConfig,v17ImportConfig,v17Cue,ragePlusDefs:ragePlusDefs.map(o=>({...o})),ragePlusCfg,ragePlusOff,get rageTargetName(){return rageFocus?.name||null;},smoothHeadFlick,get smoothFlickActive(){return !!smoothFlickJob},v16Options:v16Opts.map(o=>({id:o.flag,name:o.name,group:o.group,desc:o.desc})),v16Config:v16Cfg,v16Off,legitProOptions:legitProDefs.map(p=>({id:p.flag,name:p.name,desc:p.desc})),legitProSettings:legitProCfg,legitProState,legitProDisable,v15Powers:v15Powers.map(p=>({id:p.id,name:p.name,group:p.group,desc:p.desc})),v15Off,v14Powers:v14Catalog.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),v14Action:(id)=>{const p=v14ById.get(id);if(p?.mode==='action')v14RunPower(p);},v14Off:v14Disable,v14Settings:v14Cfg,paradox131Powers:v131Powers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradox131Action:v131Action,paradox131Off:v131Off,paradox131FusionEquip:v131EquipFusion,autoWin:paradoxAutoWin,paradoxPowers:paradoxPowers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradoxAction,paradoxOff,supernovaPowers:snPowers.map(p=>({...p})),supernovaAction:snAction,omegaPowers:omegaPowers.map(p=>({...p})),omegaAction,remove,flags,visibleHeadFlick,realityPowers:rePowers.map(p=>({...p})),realityAction:reDoAction,realityOff:reDisableAll,overdrivePowers:odPowers.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),usePower:id=>odAction(id),fpsBoost:on=>{if(!!flags.fpsBoost!==!!on)toggleFlag('fpsBoost')},open:showMenu,killBots,stopLegitLock,playKillSound:()=>playKillSound(false,true),get bindings(){return {...bindings}},setBinding,panicReset};
+  notice('VOIDWARE V18.8 loaded • Controlled Air Strafe + Purple Void');
 })();
