@@ -5402,8 +5402,8 @@
   function v17FpsWatch(now){if(!v17.adaptiveFPS||now-v17State.lastAdaptive<1500)return;v17State.lastAdaptive=now;
     const subset=v17State.frames.slice(-36),avg=subset.reduce((s,v)=>s+v.y,0)/Math.max(1,subset.length);
     if(subset.length<15)return;
-    if(avg<v17.fpsFloor&&!flags.fpsBoost&&!flags.fpsBooster){flags.fpsBoost=true;v17State.autoEnabledByUs=true;v17State.autoFPS=true;v17Log('fps_boost',{fps:Math.round(avg)});}
-    else if(avg>v17.fpsFloor+15&&v17State.autoEnabledByUs&&flags.fpsBoost){flags.fpsBoost=false;v17State.autoEnabledByUs=false;v17State.autoFPS=false;}
+    if(avg<v17.fpsFloor&&!flags.fpsBoost&&!flags.fpsBooster){flags.fpsBooster=true;fpsBoosterEnable(true);v17State.autoEnabledByUs=true;v17State.autoFPS=true;v17Log('full_quality_fps_boost',{fps:Math.round(avg)});}
+    else if(avg>v17.fpsFloor+15&&v17State.autoEnabledByUs&&flags.fpsBooster){flags.fpsBooster=false;fpsBoosterEnable(false);v17State.autoEnabledByUs=false;v17State.autoFPS=false;}
   }
   function v17Tick(now,dt){
     if(!active)return;
@@ -5523,7 +5523,7 @@
       v17Note(b,'Only local VOIDWARE/DEATH WON settings are included. Re-open VOIDWARE after import.');
       b=v17Card('12 · Adaptive Performance Mode','Opt-in FPS threshold. Enables existing FPS Boost if sustained FPS falls below the target.');
       v17Button(b,'Adaptive FPS: '+(v17.adaptiveFPS?'ON':'OFF'),()=>{v17.adaptiveFPS=!v17.adaptiveFPS;
-        if(!v17.adaptiveFPS&&v17State.autoEnabledByUs){flags.fpsBoost=false;v17State.autoEnabledByUs=false;}renderTab()});
+        if(!v17.adaptiveFPS&&v17State.autoEnabledByUs){flags.fpsBooster=false;fpsBoosterEnable(false);v17State.autoEnabledByUs=false;v17State.autoFPS=false;}renderTab()});
       v17Range(b,'Minimum FPS target',25,120,5,v17.fpsFloor,v=>v17.fpsFloor=v);
       b=v17Card('13 · Live FPS & Latency Graph','Shows measured browser frame rate; network latency only if reported by the game.');v17Canvas(b,'fps');
       const ping=Number(g.ping??g.net?.ping);v17Note(b,'Live latency: '+(Number.isFinite(ping)?ping+' ms':'N/A (game does not expose ping)'));if(Number.isFinite(ping))v17Canvas(b,'ping',120);
@@ -7033,7 +7033,7 @@
     }
     if(!num){const p=document.createElement('p');p.className='dw-desc';p.textContent='No shortcuts match your search.';holder.append(p)}
   }
-  function panicReset(){if(v17State.autoEnabledByUs){flags.fpsBoost=false;v17State.autoEnabledByUs=false;}v17.adaptiveFPS=false;v17State.cueBot=null;v17CueHud.style.display='none';cancelSmoothHeadFlick();ragePlusOff();v16Off();legitProDisable();v15Off();v14Disable();v131Off();snClear();omegaOffAll();
+  function panicReset(){if(v17State.autoEnabledByUs){flags.fpsBooster=false;fpsBoosterEnable(false);v17State.autoEnabledByUs=false;}v17.adaptiveFPS=false;v17State.cueBot=null;v17CueHud.style.display='none';cancelSmoothHeadFlick();ragePlusOff();v16Off();legitProDisable();v15Off();v14Disable();v131Off();snClear();omegaOffAll();
     ++menuAnimationToken;cancelMenuAnimation();odRestoreFps();reDisableAll();
     for(const id of Object.keys(flags))flags[id]=false;
     fpsBoosterEnable(false);
@@ -7648,7 +7648,7 @@
     fpsBoosterEnable(false);
     gameClockRestore();
     slStop();
-    if(v17State.autoEnabledByUs)flags.fpsBoost=false;
+    if(v17State.autoEnabledByUs){flags.fpsBooster=false;fpsBoosterEnable(false);v17State.autoEnabledByUs=false;}
     if(g.weapons.fire!==v17BeforeFire)g.weapons.fire=v17BeforeFire;
     if(typeof v17BeforeDamage==='function'&&g.dealDamage!==v17BeforeDamage)g.dealDamage=v17BeforeDamage;cancelSmoothHeadFlick();ragePlusOff();active=false;window.removeEventListener('keydown',keys,true);
     odRestoreFps();v16Off();legitProDisable();v15Off();v14Disable();v131Off();paradoxOff();snClear();reDisableAll();omegaOffAll();
