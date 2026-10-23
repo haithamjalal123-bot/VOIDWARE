@@ -1,4 +1,4 @@
-/* VOIDWARE V18.8 • CONTROLLED AIR STRAFE • STUDIO UI • 15 NEW TOOLS • 200 NEW POWERS • PRESERVES V13.1 PARADOX AND +15 ABILITIES + ADVANCED WEAPON FUSION + ALL LEGACY FEATURES - 100 new powers across 10 labs, plus Rocket Recoil, Omega and legacy features | Clutcher.io LOCAL BOT LAB | 2026-10-17
+/* VOIDWARE V18.9 • GAME CLOCK SPEEDHACK • STUDIO UI • 15 NEW TOOLS • 200 NEW POWERS • PRESERVES V13.1 PARADOX AND +15 ABILITIES + ADVANCED WEAPON FUSION + ALL LEGACY FEATURES - 100 new powers across 10 labs, plus Rocket Recoil, Omega and legacy features | Clutcher.io LOCAL BOT LAB | 2026-10-17
    Paste this entire file once into DevTools Console while in a bot match.
    U = menu, V14 tabs in top navigation, P = Rage tab, Q = Mega Rage, I = bot wipe, V = wallbang, End = emergency off.
    All feature/action hotkeys can be reassigned in the HOTKEYS tab.
@@ -20,9 +20,108 @@
     window.removeEventListener('keydown', window.botKillHotkey);
     delete window.botKillHotkey;
   }
+  // V18.9 | LOCAL client-side game clock control. Installed only on first enable.
+  // RAF timestamps + performance.now() share one continuously rebased virtual timeline.
+  // Never patch Date.now(), audio clocks or networking; those stay native.
+  const nativeGameRAF=window.requestAnimationFrame.bind(window);
+  const nativeGamePerfNow=performance.now.bind(performance);
+  const originalRAF=window.requestAnimationFrame;
+  const ownPerfNowDescriptor=Object.getOwnPropertyDescriptor(performance,'now');
+  const gameClockKey='voidwareV18_9_timeControl';
+  const gameClockState={installed:false,perfHook:false,rafHook:false,rafCallbacks:0,perfReads:0,lastCallbackReal:null,lastCallbackVirtual:null,errors:[],requestedRate:1};
+  let gameClockRate=1,gameClockRealAnchor=nativeGamePerfNow(),gameClockVirtualAnchor=gameClockRealAnchor;
+  try{
+    const saved=JSON.parse(localStorage.getItem(gameClockKey)||'{}');
+    if(Number.isFinite(+saved.rate))gameClockRate=Math.min(1000,Math.max(.0001,+saved.rate));
+  }catch{}
+  const gameClockSave=()=>{try{localStorage.setItem(gameClockKey,JSON.stringify({rate:gameClockRate}))}catch{}};
+  function gameClockNow(){
+    gameClockState.perfReads++;
+    return gameClockVirtualAnchor+(nativeGamePerfNow()-gameClockRealAnchor)*gameClockState.requestedRate;
+  }
+  function gameClockSetRate(rate){
+    const real=nativeGamePerfNow();
+    const next=Math.min(1000,Math.max(.0001,Number(rate)||1));
+    // A frame waiting during 1000× should not produce an enormous final
+    // fast-time step after switching to 1×. Apply the new rate to the
+    // unfinished frame interval; preserve the timestamp of the last frame.
+    if(gameClockState.lastCallbackReal!==null){
+      gameClockVirtualAnchor=gameClockState.lastCallbackVirtual+
+        Math.max(0,real-gameClockState.lastCallbackReal)*next;
+    }else{
+      gameClockVirtualAnchor+=(real-gameClockRealAnchor)*next;
+    }
+    gameClockRealAnchor=real;
+    gameClockState.requestedRate=next;
+  }
+  function gameClockInstall(){
+    if(gameClockState.installed)return true;
+    gameClockRealAnchor=nativeGamePerfNow();gameClockVirtualAnchor=gameClockRealAnchor;
+    try{
+      Object.defineProperty(performance,'now',{configurable:true,writable:true,value:gameClockNow});
+      gameClockState.perfHook=performance.now===gameClockNow;
+    }catch(e){gameClockState.errors.push('performance.now: '+e.message)}
+    try{
+      window.requestAnimationFrame=function voidwareTimeRaf(callback){
+        if(typeof callback!=='function')return nativeGameRAF(callback);
+        return nativeGameRAF(function(){gameClockState.rafCallbacks++;const real=nativeGamePerfNow(),virtual=gameClockNow();gameClockState.lastCallbackReal=real;gameClockState.lastCallbackVirtual=virtual;callback(virtual)});
+      };
+      gameClockState.rafHook=true;
+    }catch(e){gameClockState.errors.push('requestAnimationFrame: '+e.message)}
+    gameClockState.installed=gameClockState.perfHook||gameClockState.rafHook;
+    if(!gameClockState.installed){
+      try{if(ownPerfNowDescriptor)Object.defineProperty(performance,'now',ownPerfNowDescriptor);else delete performance.now}catch{}
+      window.requestAnimationFrame=originalRAF;
+    }
+    return gameClockState.installed;
+  }
+  function gameClockSet(value,enable=true){
+    const n=Number(value);
+    if(!Number.isFinite(n))return false;
+    gameClockRate=Math.min(1000,Math.max(.0001,n));gameClockSave();
+    if(enable){if(!gameClockInstall())return false;flags.gameSpeedHack=true;}
+    gameClockSetRate(flags.gameSpeedHack?gameClockRate:1);
+    return true;
+  }
+  function gameClockReset(){flags.gameSpeedHack=false;gameClockSetRate(1);}
+  function gameClockRestore(){
+    gameClockReset();
+    // Native timer restoration can cause a one-frame jump after heavy slowdown.
+    // A browser refresh fully reinitializes the original game clock.
+    if(gameClockState.rafHook&&window.requestAnimationFrame!==originalRAF)window.requestAnimationFrame=originalRAF;
+    if(gameClockState.perfHook){
+      try{if(ownPerfNowDescriptor)Object.defineProperty(performance,'now',ownPerfNowDescriptor);else delete performance.now}catch(e){console.warn('[VOIDWARE] Restore clock:',e)}
+    }
+    gameClockState.installed=false;gameClockState.perfHook=false;gameClockState.rafHook=false;
+  }
+  function gameClockFormat(rate){return Number(Number(rate).toPrecision(5)).toString()+'×';}
+  function gameClockRenderControls(){
+    section('⏱ GAME SPEED · WORLD CLOCK','GD-style local game-time scale. Below 1× is slow motion, above 1× fast-forward. Extreme rates can break physics or be capped by the game.');
+    const row=grid();tile(row,'⏱ World Speed Hack','Scale the browser game clock; separate from player Movement Speed.',null,'gameSpeedHack');
+    const box=document.createElement('div');box.className='dw-range';
+    const title=document.createElement('div');title.className='dw-name';title.textContent='Game speed (logarithmic)';
+    const display=document.createElement('b');display.style.cssText='float:right;color:#bd91ff';display.textContent=gameClockFormat(gameClockRate);title.append(display);
+    const range=document.createElement('input');range.type='range';range.min='-4';range.max='3';range.step='.01';range.value=Math.log10(gameClockRate);
+    range.setAttribute('aria-label','Game speed logarithmic slider');
+    const numeric=document.createElement('input');numeric.type='number';numeric.min='.0001';numeric.max='1000';numeric.step='any';numeric.value=String(gameClockRate);
+    numeric.style.cssText='width:100%;margin-top:8px';numeric.setAttribute('aria-label','Exact game speed');
+    const set=v=>{if(gameClockSet(v)){range.value=String(Math.log10(gameClockRate));numeric.value=String(gameClockRate);display.textContent=gameClockFormat(gameClockRate);}else{numeric.value=String(gameClockRate);notice('Game clock hook unavailable');}};
+    range.addEventListener('input',()=>set(Math.pow(10,Number(range.value))));
+    numeric.addEventListener('change',()=>set(numeric.value));
+    numeric.addEventListener('keydown',e=>{if(e.key==='Enter'){set(numeric.value);numeric.blur();}});
+    box.append(title,range,numeric);content.append(box);
+    const presets=grid();
+    for(const [label,value] of [['0.0001×',.0001],['0.01×',.01],['0.1×',.1],['0.5×',.5],['1× NORMAL',1],['2×',2],['10×',10],['100×',100],['1000×',1000]]){
+      tile(presets,label,'Set local game clock to '+label,()=>{if(value===1){gameClockReset();gameClockRate=1;gameClockSave();renderTab()}else{set(value);renderTab()}});
+    }
+    const reset=grid();tile(reset,'↺ Restore Normal Time','Reset to 1× instantly. Removes the speed modifier without jumping the clock.',()=>{gameClockReset();gameClockRate=1;gameClockSave();renderTab()});
+    const hint=document.createElement('p');hint.className='dw-desc';
+    hint.textContent='Local match only: engine time, physics and timers when they use RAF/performance.now. Browser tabs, server time, audio and CSS animations are not guaranteed to scale. 1000× may destabilize the game. Refresh if the game freezes.';
+    content.append(hint);
+  }
   const flags = { wallbang: false, wallIcon: true, silent: false, autoShoot: false, triggerbot: false, legitAim: false, fastFire: false, fly: false, chams: false, glow: false, spin: false, third: false,
     noRecoil: false, noSpread: false, infinity: false, god: false, autoBhop: false, autoStrafe: false,
-    freeze: false, esp: false, espTracers: true, espHealth: true, espSkeleton: false, showCrosshair: false, flyNoclip: false, speedHud: true,
+    gameSpeedHack:false, freeze: false, esp: false, espTracers: true, espHealth: true, espSkeleton: false, showCrosshair: false, flyNoclip: false, speedHud: true,
     // V6 additions — all exposed in the hotkeys tab
     megaRage:false, rage360:false, rageSticky:false, rageLead:false, rageHead:false,
     autoReload:false, autoScope:false, legitSticky:false, legitVisible:true, legitDeadzone:true,
@@ -917,7 +1016,7 @@
 
   document.head.append(style);
   const panel = document.createElement('div');panel.id='death-won-panel';
-  panel.innerHTML = `<div class="dw-top"><div class="dw-mark">V</div><div><div class="dw-title">VOID<b>WARE</b></div><div class="dw-sub">VOIDWARE V18.8 <span class="dw-dot">·</span> Studio edition</div></div>
+  panel.innerHTML = `<div class="dw-top"><div class="dw-mark">V</div><div><div class="dw-title">VOID<b>WARE</b></div><div class="dw-sub">VOIDWARE V18.9 <span class="dw-dot">·</span> Studio edition</div></div>
     <div class="dw-topright"><span class="dw-online" id="dw-bot-status">● LOCAL MATCH</span><button class="dw-head-btn" id="dw-open-home" title="Home dashboard">Home</button><span class="dw-version">v18.2</span><button class="dw-x" id="dw-close" title="Close menu">×</button></div></div>
     <div class="dw-superbar" role="navigation" aria-label="Main categories"><div class="dw-topcats" id="dw-topcats"></div><span class="dw-supermeta">Local bot sandbox</span></div>
     <div class="dw-subbar" role="navigation" aria-label="Category sub-tabs">
@@ -1053,6 +1152,10 @@
   }
   function toggleFlag(id,handler=null){
     flags[id]=!flags[id];
+    if(id==='gameSpeedHack'){
+      if(flags[id]){if(!gameClockInstall())flags[id]=false;}
+      gameClockSetRate(flags[id]?gameClockRate:1);
+    }
     // If either radar enhancement is enabled, automatically show the mini-radar.
     if((id==='radarElevation'||id==='radarAimPulse')&&flags[id])flags.radar=true;
     if(id==='radarRequireLOS')radarSave();
@@ -6524,6 +6627,7 @@
       slider('Flight handling / response',4,35,1,flySmooth,x=>flySmooth=x,' /s');
       slider('Air strafe steering',2,25,1,airSteer,x=>{airSteer=x;strafeSave()},' /s');
       slider('Air strafe speed cap',6,30,1,airMaxSpeed,x=>{airMaxSpeed=x;strafeSave()},' u/s');
+      gameClockRenderControls();
       slider('Safe Blink distance',3,60,1,blinkDistance,x=>blinkDistance=x,' m');
       const a2=grid();tile(a2,'↺ Reset Speed','Restore normal movement multiplier.',()=>{speed=1;renderTab()});
       tile(a2,'↔️ Reset Strafe','Restore stable strafe steering and safe airborne speed cap.',()=>{airSteer=14;airMaxSpeed=11;strafeSave();renderTab()});
@@ -6766,7 +6870,7 @@
     ++menuAnimationToken;cancelMenuAnimation();odRestoreFps();reDisableAll();
     for(const id of Object.keys(flags))flags[id]=false;
     flags.wallIcon=true;flags.legitVisible=true;legitFocus=null;rageFocus=null;triggerPrev=null;triggerOnset=0;speed=1;gravityScale=1;spinPhase=0;flightVel={x:0,y:0,z:0};blinkUndo=null;megaSnapshot=null;ammoRegenAccumulator=0;
-    clearAimBodyGlow();clearChams();unfreeze();notice('Emergency OFF · all powers disabled');
+    gameClockReset();clearAimBodyGlow();clearChams();unfreeze();notice('Emergency OFF · all powers disabled');
     if(panel.style.display!=='none')renderTab();
   }
   // Values also get bindable increment/decrement actions, not just toggle switches.
@@ -7341,7 +7445,7 @@
       if(!flags.fpsBoost||now-odLastEsp>=1000/odPrefs.espRate){odLastEsp=now;renderESP();}
     }
     else if(ctx){clearAimBodyGlow();resetVoidFocus();ctx.clearRect(0,0,espCanvas.width,espCanvas.height);}
-    requestAnimationFrame(frame);
+    nativeGameRAF(frame);
   }
   // V17 telemetry wraps final gameplay hooks once, and restores them on cleanup.
   const v17BeforeFire=g.weapons.fire;
@@ -7358,10 +7462,11 @@
     if(active&&(!Number.isFinite(prev)||Number(victim?.health)!==prev))v17OnDamage(victim,damage,shooter,head);
     return r;
   };
-  requestAnimationFrame(frame);
+  nativeGameRAF(frame);
   function remove(){
     if(!active)return;
     v18Remove();
+    gameClockRestore();
     slStop();
     if(v17State.autoEnabledByUs)flags.fpsBoost=false;
     if(g.weapons.fire!==v17BeforeFire)g.weapons.fire=v17BeforeFire;
@@ -7397,6 +7502,6 @@
     panel.remove();curtain.remove();style.remove();esp.remove();cross.remove();flyHud.remove();v6Hud.remove();
     if(window.deathWon?.remove===remove)delete window.deathWon;
   }
-  window.deathWon={version:"18.8-VOIDWARE",airStrafe:{get enabled(){return flags.autoStrafe},get steer(){return airSteer},get cap(){return airMaxSpeed},get horizontalSpeed(){return Math.hypot(g.player.vx||0,g.player.vz||0)},reset:()=>{airSteer=14;airMaxSpeed=11;strafeSave()}},voidChams:{settings:voidChamsCfg,save:voidChamsSave,get pending(){return voidCandidate?.name||null},get activated(){return voidReadyBot?.name||null},get meshes(){return bodyGlowMeshes.size}},radar:{aimedAt:radarCrosshairOn,elevation:radarElevationKind,coordinates:radarCoordinates,ray:radarSightRay,debug:()=>({on:flags.radar,arrows:flags.radarElevation,pulse:flags.radarAimPulse,bodyGlow:flags.aimBodyGlow,glowingMeshes:bodyGlowMeshes.size,los:flags.radarRequireLOS,corner:radarCorner,...radarStats,enemyPositions:enemyBots().slice(0,12).map(b=>({name:b.name||"Enemy",relative:radarCoordinates(b),elevation:radarElevationKind(b),crosshair:radarCrosshairOn(b)}))}),get threshold(){return radarHeightThreshold},get range(){return radarRange}},utility:{types:utilityTypes.map(t=>({id:t.id,flag:t.flag,title:t.title})),settings:utilitySettings,status:utilityStatus,refill:()=>utilityRefill(true),get live(){return {...utilityRuntime}}},v18Settings:v18,v18State,v18Render,v18Save,skinLab:{get inventory(){return sl.items.map(x=>({...x}))},get equipped(){return {...sl.equipped}},get catalogSize(){return slCatalog.length},get exterior(){return slExterior(sl.float)},add:(weapon,name,float,seed)=>slAdd(slMakeItem(weapon,name,float,seed)),equip:id=>slEquip(slFind(id)),remove:id=>slDelete(slFind(id)),preview:slPaintGame,armCase:()=>{slCaseArmed=true;return true},get caseArmed(){return slCaseArmed},get caseMode(){return slCaseMode},setCaseMode:v=>{slCaseMode=v==='reel'?'reel':'cover';sl.caseDisplayMode=slCaseMode;slSave()},get casePending(){return !!slCasePending},caseDemo:()=>slCaseStart('Arms Deal 2 Case',true,true),caseStart:()=>slCaseStart(slCaseLastTitle,false,slCaseMode==='cover'),caseClose:slCaseClose},v17Settings:v17,v17State,v17OnShot,v17OnDamage,v17ApplyAim,v17SaveAim,v17EquipLoadout,v17SaveLoadout,v17ExportConfig,v17ImportConfig,v17Cue,ragePlusDefs:ragePlusDefs.map(o=>({...o})),ragePlusCfg,ragePlusOff,get rageTargetName(){return rageFocus?.name||null;},smoothHeadFlick,get smoothFlickActive(){return !!smoothFlickJob},v16Options:v16Opts.map(o=>({id:o.flag,name:o.name,group:o.group,desc:o.desc})),v16Config:v16Cfg,v16Off,legitProOptions:legitProDefs.map(p=>({id:p.flag,name:p.name,desc:p.desc})),legitProSettings:legitProCfg,legitProState,legitProDisable,v15Powers:v15Powers.map(p=>({id:p.id,name:p.name,group:p.group,desc:p.desc})),v15Off,v14Powers:v14Catalog.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),v14Action:(id)=>{const p=v14ById.get(id);if(p?.mode==='action')v14RunPower(p);},v14Off:v14Disable,v14Settings:v14Cfg,paradox131Powers:v131Powers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradox131Action:v131Action,paradox131Off:v131Off,paradox131FusionEquip:v131EquipFusion,autoWin:paradoxAutoWin,paradoxPowers:paradoxPowers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradoxAction,paradoxOff,supernovaPowers:snPowers.map(p=>({...p})),supernovaAction:snAction,omegaPowers:omegaPowers.map(p=>({...p})),omegaAction,remove,flags,visibleHeadFlick,realityPowers:rePowers.map(p=>({...p})),realityAction:reDoAction,realityOff:reDisableAll,overdrivePowers:odPowers.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),usePower:id=>odAction(id),fpsBoost:on=>{if(!!flags.fpsBoost!==!!on)toggleFlag('fpsBoost')},open:showMenu,killBots,stopLegitLock,playKillSound:()=>playKillSound(false,true),get bindings(){return {...bindings}},setBinding,panicReset};
-  notice('VOIDWARE V18.8 loaded • Controlled Air Strafe + Purple Void');
+  window.deathWon={version:"18.9-VOIDWARE",gameSpeed:{get enabled(){return flags.gameSpeedHack},get rate(){return gameClockRate},get applied(){return gameClockState.requestedRate},get status(){return {...gameClockState,clockNow:gameClockNow()}},set:r=>gameClockSet(r),reset:gameClockReset},airStrafe:{get enabled(){return flags.autoStrafe},get steer(){return airSteer},get cap(){return airMaxSpeed},get horizontalSpeed(){return Math.hypot(g.player.vx||0,g.player.vz||0)},reset:()=>{airSteer=14;airMaxSpeed=11;strafeSave()}},voidChams:{settings:voidChamsCfg,save:voidChamsSave,get pending(){return voidCandidate?.name||null},get activated(){return voidReadyBot?.name||null},get meshes(){return bodyGlowMeshes.size}},radar:{aimedAt:radarCrosshairOn,elevation:radarElevationKind,coordinates:radarCoordinates,ray:radarSightRay,debug:()=>({on:flags.radar,arrows:flags.radarElevation,pulse:flags.radarAimPulse,bodyGlow:flags.aimBodyGlow,glowingMeshes:bodyGlowMeshes.size,los:flags.radarRequireLOS,corner:radarCorner,...radarStats,enemyPositions:enemyBots().slice(0,12).map(b=>({name:b.name||"Enemy",relative:radarCoordinates(b),elevation:radarElevationKind(b),crosshair:radarCrosshairOn(b)}))}),get threshold(){return radarHeightThreshold},get range(){return radarRange}},utility:{types:utilityTypes.map(t=>({id:t.id,flag:t.flag,title:t.title})),settings:utilitySettings,status:utilityStatus,refill:()=>utilityRefill(true),get live(){return {...utilityRuntime}}},v18Settings:v18,v18State,v18Render,v18Save,skinLab:{get inventory(){return sl.items.map(x=>({...x}))},get equipped(){return {...sl.equipped}},get catalogSize(){return slCatalog.length},get exterior(){return slExterior(sl.float)},add:(weapon,name,float,seed)=>slAdd(slMakeItem(weapon,name,float,seed)),equip:id=>slEquip(slFind(id)),remove:id=>slDelete(slFind(id)),preview:slPaintGame,armCase:()=>{slCaseArmed=true;return true},get caseArmed(){return slCaseArmed},get caseMode(){return slCaseMode},setCaseMode:v=>{slCaseMode=v==='reel'?'reel':'cover';sl.caseDisplayMode=slCaseMode;slSave()},get casePending(){return !!slCasePending},caseDemo:()=>slCaseStart('Arms Deal 2 Case',true,true),caseStart:()=>slCaseStart(slCaseLastTitle,false,slCaseMode==='cover'),caseClose:slCaseClose},v17Settings:v17,v17State,v17OnShot,v17OnDamage,v17ApplyAim,v17SaveAim,v17EquipLoadout,v17SaveLoadout,v17ExportConfig,v17ImportConfig,v17Cue,ragePlusDefs:ragePlusDefs.map(o=>({...o})),ragePlusCfg,ragePlusOff,get rageTargetName(){return rageFocus?.name||null;},smoothHeadFlick,get smoothFlickActive(){return !!smoothFlickJob},v16Options:v16Opts.map(o=>({id:o.flag,name:o.name,group:o.group,desc:o.desc})),v16Config:v16Cfg,v16Off,legitProOptions:legitProDefs.map(p=>({id:p.flag,name:p.name,desc:p.desc})),legitProSettings:legitProCfg,legitProState,legitProDisable,v15Powers:v15Powers.map(p=>({id:p.id,name:p.name,group:p.group,desc:p.desc})),v15Off,v14Powers:v14Catalog.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),v14Action:(id)=>{const p=v14ById.get(id);if(p?.mode==='action')v14RunPower(p);},v14Off:v14Disable,v14Settings:v14Cfg,paradox131Powers:v131Powers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradox131Action:v131Action,paradox131Off:v131Off,paradox131FusionEquip:v131EquipFusion,autoWin:paradoxAutoWin,paradoxPowers:paradoxPowers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradoxAction,paradoxOff,supernovaPowers:snPowers.map(p=>({...p})),supernovaAction:snAction,omegaPowers:omegaPowers.map(p=>({...p})),omegaAction,remove,flags,visibleHeadFlick,realityPowers:rePowers.map(p=>({...p})),realityAction:reDoAction,realityOff:reDisableAll,overdrivePowers:odPowers.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),usePower:id=>odAction(id),fpsBoost:on=>{if(!!flags.fpsBoost!==!!on)toggleFlag('fpsBoost')},open:showMenu,killBots,stopLegitLock,playKillSound:()=>playKillSound(false,true),get bindings(){return {...bindings}},setBinding,panicReset};
+  notice('VOIDWARE V18.9 loaded • Game Speed 0.0001×–1000×');
 })();
