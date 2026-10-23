@@ -1,4 +1,4 @@
-/* VOIDWARE V18.9 • GAME CLOCK SPEEDHACK • STUDIO UI • 15 NEW TOOLS • 200 NEW POWERS • PRESERVES V13.1 PARADOX AND +15 ABILITIES + ADVANCED WEAPON FUSION + ALL LEGACY FEATURES - 100 new powers across 10 labs, plus Rocket Recoil, Omega and legacy features | Clutcher.io LOCAL BOT LAB | 2026-10-17
+/* VOIDWARE V19.0 • FULL QUALITY FPS BOOSTER • STUDIO UI • 15 NEW TOOLS • 200 NEW POWERS • PRESERVES V13.1 PARADOX AND +15 ABILITIES + ADVANCED WEAPON FUSION + ALL LEGACY FEATURES - 100 new powers across 10 labs, plus Rocket Recoil, Omega and legacy features | Clutcher.io LOCAL BOT LAB | 2026-10-17
    Paste this entire file once into DevTools Console while in a bot match.
    U = menu, V14 tabs in top navigation, P = Rage tab, Q = Mega Rage, I = bot wipe, V = wallbang, End = emergency off.
    All feature/action hotkeys can be reassigned in the HOTKEYS tab.
@@ -121,7 +121,7 @@
   }
   const flags = { wallbang: false, wallIcon: true, silent: false, autoShoot: false, triggerbot: false, legitAim: false, fastFire: false, fly: false, chams: false, glow: false, spin: false, third: false,
     noRecoil: false, noSpread: false, infinity: false, god: false, autoBhop: false, autoStrafe: false,
-    gameSpeedHack:false, freeze: false, esp: false, espTracers: true, espHealth: true, espSkeleton: false, showCrosshair: false, flyNoclip: false, speedHud: true,
+    gameSpeedHack:false, fpsBooster:false, freeze: false, esp: false, espTracers: true, espHealth: true, espSkeleton: false, showCrosshair: false, flyNoclip: false, speedHud: true,
     // V6 additions — all exposed in the hotkeys tab
     megaRage:false, rage360:false, rageSticky:false, rageLead:false, rageHead:false,
     autoReload:false, autoScope:false, legitSticky:false, legitVisible:true, legitDeadzone:true,
@@ -135,6 +135,138 @@
     legitWallLock:false, killAura:false, teamGuardian:false, silenceAura:false,
     blindAura:false, bounceAura:false, glassBots:false, vampire:false, enemyConfuse:false,
     disarmAura:false, killSound:false, flickPrecision:true, rocketRecoil:false };
+
+  // V19.0 | FULL-QUALITY FPS BOOSTER
+  // Preserve renderer pixel ratio, materials, textures, shadows and game logic.
+  // Only allow Three.js's *native* frustum skip on small opaque static meshes
+  // that previously had it explicitly disabled. Skip models, HUDs and effects.
+  // Slow only VOIDWARE's optional 2D overlay—not the real game renderer.
+  const fpsBoosterKey='voidwareV19_fps_booster';
+  const fpsBoosterCfg={offscreenCulling:true,overlayHz:60,scanEveryMs:5000};
+  try{
+    const saved=JSON.parse(localStorage.getItem(fpsBoosterKey)||'{}');
+    if(typeof saved.offscreenCulling==='boolean')fpsBoosterCfg.offscreenCulling=saved.offscreenCulling;
+    if(Number.isFinite(+saved.overlayHz))fpsBoosterCfg.overlayHz=Math.max(15,Math.min(120,+saved.overlayHz));
+  }catch{}
+  const fpsBoosterSave=()=>{try{localStorage.setItem(fpsBoosterKey,JSON.stringify(fpsBoosterCfg))}catch{}};
+  const fpsBoosterState={
+    frames:0,lastFpsAt:nativeGamePerfNow(),realFps:0,lastScan:0,
+    scannedMeshes:0,optimizedMeshes:new Map(),overlayDraws:0,overlaySkipped:0,
+    lastOverlayAt:-Infinity,blankedOverlay:false,error:''
+  };
+  function fpsBoosterRestoreCulling(){
+    for(const [node,original] of fpsBoosterState.optimizedMeshes){
+      try{if(node.frustumCulled===true)node.frustumCulled=original}catch{}
+    }
+    fpsBoosterState.optimizedMeshes.clear();
+    fpsBoosterState.scannedMeshes=0;
+  }
+  function fpsBoosterCullScan(realNow=nativeGamePerfNow()){
+    if(!flags.fpsBooster||!fpsBoosterCfg.offscreenCulling||!g.scene?.traverse)return;
+    if(realNow-fpsBoosterState.lastScan<fpsBoosterCfg.scanEveryMs)return;
+    fpsBoosterState.lastScan=realNow;
+    let scanned=0;
+    try{
+      g.scene.traverse(node=>{
+        // Never change skins, animated players, chams, transparency, large surfaces,
+        // special effects, sprites or viewmodels.
+        if(!node?.isMesh||node.isSkinnedMesh||node.isInstancedMesh||
+           !node.visible||node.frustumCulled!==false||node.renderOrder>0)return;
+        if(++scanned>5000)return;
+        const sphere=node.geometry?.boundingSphere;
+        if(!sphere||!Number.isFinite(sphere.radius)||sphere.radius<=0||sphere.radius>12)return;
+        const m=node.material;
+        if(!m||Array.isArray(m)||m.transparent||m.depthTest===false||
+           m.side===2||m.alphaTest>0||m.isShaderMaterial||m.isRawShaderMaterial)return;
+        let parent=node.parent,animated=false;
+        for(let depth=0;parent&&depth<8;parent=parent.parent,depth++){
+          if(parent.isSkinnedMesh||parent.userData?.animation||parent.userData?.noCulling){
+            animated=true;break;
+          }
+        }
+        if(animated)return;
+        fpsBoosterState.optimizedMeshes.set(node,false);
+        node.frustumCulled=true; // The engine now skips this object only when off screen.
+      });
+      fpsBoosterState.scannedMeshes=scanned;
+    }catch(e){fpsBoosterState.error=String(e?.message||e);fpsBoosterRestoreCulling();}
+  }
+  function fpsBoosterEnable(on){
+    if(!on){
+      fpsBoosterRestoreCulling();fpsBoosterState.lastOverlayAt=-Infinity;
+      fpsBoosterState.blankedOverlay=false;return;
+    }
+    if(flags.fpsBoost){
+      flags.fpsBoost=false;odRestoreFps(); // Never combine with old low-resolution FPS boost.
+    }
+    fpsBoosterState.lastScan=-Infinity;
+    fpsBoosterCullScan();
+  }
+  function fpsBoosterTick(){
+    const t=nativeGamePerfNow(); // Immune to V18.9 game speed's modified clock.
+    fpsBoosterState.frames++;
+    const elapsed=t-fpsBoosterState.lastFpsAt;
+    if(elapsed>=1000){
+      fpsBoosterState.realFps=Math.round(fpsBoosterState.frames*1000/elapsed);
+      fpsBoosterState.frames=0;fpsBoosterState.lastFpsAt=t;
+    }
+    if(flags.fpsBooster)fpsBoosterCullScan(t);
+    if(activeTab==='fps:lab'&&panel.style.display!=='none'){
+      const e=content.querySelector('#dw-fps-native');
+      if(e)e.textContent=String(fpsBoosterState.realFps);
+      const c=content.querySelector('#dw-fps-cull');
+      if(c)c.textContent=String(fpsBoosterState.optimizedMeshes.size);
+      const info=content.querySelector('#dw-fps-overlay');
+      if(info)info.textContent=String(fpsBoosterState.overlayDraws);
+    }
+  }
+  function fpsBoosterAllowOverlay(){
+    if(!flags.fpsBooster)return true;
+    const t=nativeGamePerfNow();
+    if(t-fpsBoosterState.lastOverlayAt<1000/fpsBoosterCfg.overlayHz){
+      fpsBoosterState.overlaySkipped++;return false;
+    }
+    fpsBoosterState.lastOverlayAt=t;fpsBoosterState.overlayDraws++;return true;
+  }
+  function fpsBoosterRender(){
+    section('⚡ FULL QUALITY · FPS BOOSTER',
+      'Optimize invisible objects and optional overlay work without reducing texture resolution, render scale or lighting. 100+ FPS depends on hardware and the browser.');
+    const cards=grid();
+    tile(cards,'⚡ ENABLE FULL QUALITY BOOST','Enable conservative off-screen frustum culling and limit unnecessary VOIDWARE overlay redraws.',null,'fpsBooster');
+    tile(cards,'↺ RESTORE DEFAULT','Turn off the optimizer and restore all originally changed mesh culling flags.',()=>{
+      flags.fpsBooster=false;fpsBoosterEnable(false);renderTab()
+    });
+    section('LIVE PERFORMANCE','Uses the real browser clock, so the game-speed hack cannot fake these numbers.');
+    const stats=document.createElement('div');stats.className='dw-grid';
+    const statistic=(title,id,value)=>{
+      const c=document.createElement('div');c.className='dw-feature-note';
+      const l=document.createElement('div');l.textContent=title;l.style.cssText='font-size:12px;color:#a7a8ba';
+      const v=document.createElement('strong');v.id=id;v.textContent=String(value);
+      v.style.cssText='font-size:24px;color:#b89aff;display:block;margin-top:6px';
+      c.append(l,v);stats.append(c);
+    };
+    statistic('Browser RAF FPS','dw-fps-native',fpsBoosterState.realFps);
+    statistic('Safe culling candidates','dw-fps-cull',fpsBoosterState.optimizedMeshes.size);
+    statistic('Overlay redraws','dw-fps-overlay',fpsBoosterState.overlayDraws);
+    content.append(stats);
+    section('SAFE OPTIMIZATIONS','Nothing here lowers the original 3D resolution or removes visible models.');
+    selector('Off-screen frustum culling', [['on','ON · small opaque objects'],['off','OFF · original culling']],
+      fpsBoosterCfg.offscreenCulling?'on':'off',v=>{
+        fpsBoosterCfg.offscreenCulling=v==='on';fpsBoosterSave();
+        if(!fpsBoosterCfg.offscreenCulling)fpsBoosterRestoreCulling();
+        else if(flags.fpsBooster){fpsBoosterState.lastScan=-Infinity;fpsBoosterCullScan();}
+      });
+    slider('VOIDWARE 2D overlay refresh',15,120,5,fpsBoosterCfg.overlayHz,v=>{
+      fpsBoosterCfg.overlayHz=v;fpsBoosterSave();
+    },' Hz');
+    const info=document.createElement('p');info.className='dw-desc';
+    info.textContent='Overlay refresh affects optional ESP/radar redraws, not the 3D game graphics. Three.js already culls most off-screen meshes automatically. This option safely enables its native culling for additional eligible objects. Performance improvement varies by map and device.';
+    content.append(info);
+    const actions=grid();
+    tile(actions,'◉ GO TO OLD BOOSTER','Legacy low-resolution booster (separate; lowers graphics quality).',()=>showMenu('performance'));
+    tile(actions,'⟳ RESCAN SCENE','Recheck new scene objects for safe off-screen culling.',()=>{fpsBoosterState.lastScan=-Infinity;fpsBoosterCullScan();renderTab()});
+  }
+
   // V16.2: ten independent Rage settings. Nothing changes until enabled.
   const ragePlusDefs=[
     {id:'rageLowHP',name:'Lowest HP Priority',desc:'Acquire enemies with the least remaining health first.'},
@@ -1016,7 +1148,7 @@
 
   document.head.append(style);
   const panel = document.createElement('div');panel.id='death-won-panel';
-  panel.innerHTML = `<div class="dw-top"><div class="dw-mark">V</div><div><div class="dw-title">VOID<b>WARE</b></div><div class="dw-sub">VOIDWARE V18.9 <span class="dw-dot">·</span> Studio edition</div></div>
+  panel.innerHTML = `<div class="dw-top"><div class="dw-mark">V</div><div><div class="dw-title">VOID<b>WARE</b></div><div class="dw-sub">VOIDWARE V19.0 <span class="dw-dot">·</span> Studio edition</div></div>
     <div class="dw-topright"><span class="dw-online" id="dw-bot-status">● LOCAL MATCH</span><button class="dw-head-btn" id="dw-open-home" title="Home dashboard">Home</button><span class="dw-version">v18.2</span><button class="dw-x" id="dw-close" title="Close menu">×</button></div></div>
     <div class="dw-superbar" role="navigation" aria-label="Main categories"><div class="dw-topcats" id="dw-topcats"></div><span class="dw-supermeta">Local bot sandbox</span></div>
     <div class="dw-subbar" role="navigation" aria-label="Category sub-tabs">
@@ -1045,6 +1177,7 @@
   const visibleCountEl=panel.querySelector('#dw-nav-visible-total');
   const topCategories=[
     ['home','Home',['home','finder','presets','performance']],
+    ['fps','FPS Boost',['fps:lab']],
     ['rage','Rage',['rage','mega','v15:aim','v15:trigger','v14:aim','v14:arsenal','v14:combat','v14:chaos','paradox','paradox131','omega:combat','ov:combat','sn:mayhem','re:cosmic','re:tech','re:mutations']],
     ['legit','Legit',['v17:aim','legit','legitpro','v16:aim','v16:trigger','move','rocket','ov:movement','ov:blink','omega:movement','sn:rocket','sn:mobility','v15:movement','v14:movement']],
     ['visuals','Visuals',['visual','ov:visual','sn:visuals','omega:studio','v15:visuals','v14:visuals','re:visual']],
@@ -1152,6 +1285,7 @@
   }
   function toggleFlag(id,handler=null){
     flags[id]=!flags[id];
+    if(id==='fpsBooster')fpsBoosterEnable(flags[id]);
     if(id==='gameSpeedHack'){
       if(flags[id]){if(!gameClockInstall())flags[id]=false;}
       gameClockSetRate(flags[id]?gameClockRate:1);
@@ -1483,6 +1617,7 @@
 
   // OBSIDIAN NAVIGATION: category folders, search and instant page navigation.
   const tabs=[['home','⌂','Dashboard'],['re:cosmic','🌌','Cosmic Chaos'],['re:goofy','🐔','Goofy Mayhem'],['re:tech','⚡','Tech & Time'],['re:mutations','💥','Mutations'],['re:visual','🎉','World Chaos'],['rage','🎯','Rage'],['mega','☠','Mega Rage'],['legit','◎','Legit Aimbot'],['legitpro','◎','Legit Pro +10'],['move','⚡','Movement'],['rocket','🚀','Rocket Recoil'],['guns','◆','Weapons & Skins'],['audio','♫','Kill Sounds'],['models','♟','Model Changer'],['visual','◈','ESP & Radar'],['bots','▣','Bot Lab'],['extras','✶','Extras +10'],['nightfall','✦','Nightfall +16'],['finder','⌕','Power Finder'],['presets','✧','Preset Vault'],['performance','▤','FPS Boost'],['ov:survival','🛡','Survival & Armor'],['ov:movement','⚡','Movement Engine'],['ov:blink','⌁','Teleport Lab'],['ov:formations','◇','Formation Forge'],['ov:control','◉','Bot Control'],['ov:combat','☠','Combat Mutators'],['ov:weapons','✦','Weapon Workshop'],['ov:physics','☄','Physics Chaos'],['ov:visual','◈','Visual Overdrive'],['ov:challenge','⚔','Challenge Modes'],['paradox','✦','Paradox V13'],['paradox131','✧','Paradox V13.1 +15'],['v14:aim','🎯','Aim Core'],['v14:arsenal','🔫','Arsenal'],['v14:movement','🚀','Movement X'],['v14:survival','🛡','Survival X'],['v14:bots','🤖','Bot Director'],['v14:physics','🪐','Physics X'],['v14:combat','💥','Combat Events'],['v14:visuals','👁','Visual Engine'],['v14:arena','🏟','Arena Control'],['v14:chaos','☠','Chaos Combos'],['custom','⚙','Customize'],['hotkeys','⌨','Hotkeys'],['omega:combat','⚔','Omega Combat'],['omega:movement','🚀','Omega Movement'],['omega:goofy','🎪','Omega Goofy'],['omega:studio','🎨','Omega Studio'],['omega:zeus','⚡','Infinite Taser'],['sn:rocket','🚀','Rocket Science'],['sn:mobility','⚡','Hypermobility'],['sn:gravity','🌌','Gravity Engine'],['sn:circus','🎪','Bot Circus'],['sn:arena','🛡','Arena Control'],['sn:arsenal','🔫','Arsenal Experiments'],['sn:survival','❤️','Survival Systems'],['sn:visuals','◈','Neon Visual Studio'],['sn:challenge','🏆','Challenge Arena'],['sn:mayhem','💥','Supernova Mayhem'],['v15:aim','🎯','Practical Aimbot'],['v15:trigger','◎','Practical Triggerbot'],['v15:weapons','🔫','Practical Weapons'],['v15:visuals','👁','Practical ESP'],['v15:movement','⇢','Practical Movement'],['v16:aim','◎','Subtle Aim +10'],['v16:trigger','◉','Trigger Discipline +10'],['v16:weapon','🔧','Weapon Handling +10'],['v17:aim','🎯','Aim Training V17'],['v17:armory','🔫','Armory Studio V17'],['v17:skins','💎','Skin Lab V17'],['v17:studio','⚙','Control Studio V17'],['v17:replay','📊','Replay Analyzer V17']];
+  tabs.push(['fps:lab','⚡','Full Quality FPS Booster']);
   tabs.push(['v18:rage','☠','V18 Rage Lab'],['v18:legit','◎','V18 Aim & Peek'],['v18:skins','◆','V18 Skin Workshop'],['v18:studio','✧','V18 HUD & Themes'],['v18:replay','◉','V18 Replay Lab']);
   const tabInfo=new Map(tabs.map(t=>[t[0],t]));
   // Ensure every previous menu page appears under a top-level category.
@@ -6404,6 +6539,7 @@
   function v18Remove(){v18RestoreAim();v18Hud.remove();v18Cross.remove();v18Style.remove();v18State.recording=false;v18.recording=false;v18.hudEdit=false;}
 
   function renderTab(){content.replaceChildren();
+    if(activeTab==='fps:lab'){fpsBoosterRender();return;}
     if(activeTab.startsWith('v18:')){v18Render(activeTab.slice(4));return;}
     if(activeTab==='v17:skins'){slRender();return;}
     if(activeTab.startsWith('v17:')){v17Render(activeTab.slice(4));return;}
@@ -6869,6 +7005,7 @@
   function panicReset(){if(v17State.autoEnabledByUs){flags.fpsBoost=false;v17State.autoEnabledByUs=false;}v17.adaptiveFPS=false;v17State.cueBot=null;v17CueHud.style.display='none';cancelSmoothHeadFlick();ragePlusOff();v16Off();legitProDisable();v15Off();v14Disable();v131Off();snClear();omegaOffAll();
     ++menuAnimationToken;cancelMenuAnimation();odRestoreFps();reDisableAll();
     for(const id of Object.keys(flags))flags[id]=false;
+    fpsBoosterEnable(false);
     flags.wallIcon=true;flags.legitVisible=true;legitFocus=null;rageFocus=null;triggerPrev=null;triggerOnset=0;speed=1;gravityScale=1;spinPhase=0;flightVel={x:0,y:0,z:0};blinkUndo=null;megaSnapshot=null;ammoRegenAccumulator=0;
     gameClockReset();clearAimBodyGlow();clearChams();unfreeze();notice('Emergency OFF · all powers disabled');
     if(panel.style.display!=='none')renderTab();
@@ -7330,6 +7467,7 @@
   function frame(now){
     if(!active)return;
     const dt=Math.min(.055,Math.max(0,(now-lastFrame)/1000));lastFrame=now;
+    fpsBoosterTick();
     const p=g.player,playing=g.state==='playing'&&p?.alive;
     v17Tick(now,dt);v18Tick(now,dt);
     odFpsFrames++;if(now-odLastFpsAt>=1000){odMeasuredFPS=odFpsFrames*1000/(now-odLastFpsAt||1000);odFpsFrames=0;odLastFpsAt=now;}
@@ -7442,9 +7580,17 @@
     slPeriodic(now);
     if(skin==='bluegem'&&g.weapons.current==='knife'&&!flags.third)syncBlueGemFirstPerson();
     if(flags.esp||flags.glow||flags.radar||flags.aimBodyGlow||flags.enemyArrows||flags.aimFovRing||flags.aimTargetLine||flags.hitmarkers||odVisualOn()||reVisualOn()||omegaVisualOn()||snVisualActive()||paradoxVisualActive()||v131VisualActive()||v14VisualActive()){
-      if(!flags.fpsBoost||now-odLastEsp>=1000/odPrefs.espRate){odLastEsp=now;renderESP();}
+      fpsBoosterState.blankedOverlay=false;
+      if((!flags.fpsBoost||now-odLastEsp>=1000/odPrefs.espRate)&&fpsBoosterAllowOverlay()){odLastEsp=now;renderESP();}
     }
-    else if(ctx){clearAimBodyGlow();resetVoidFocus();ctx.clearRect(0,0,espCanvas.width,espCanvas.height);}
+    else if(ctx){
+      clearAimBodyGlow();resetVoidFocus();
+      // Don't clear and composite an already-empty giant transparent canvas 60–200×/s.
+      if(!flags.fpsBooster||!fpsBoosterState.blankedOverlay){
+        ctx.clearRect(0,0,espCanvas.width,espCanvas.height);
+        fpsBoosterState.blankedOverlay=true;
+      }
+    }
     nativeGameRAF(frame);
   }
   // V17 telemetry wraps final gameplay hooks once, and restores them on cleanup.
@@ -7466,6 +7612,7 @@
   function remove(){
     if(!active)return;
     v18Remove();
+    fpsBoosterEnable(false);
     gameClockRestore();
     slStop();
     if(v17State.autoEnabledByUs)flags.fpsBoost=false;
@@ -7502,6 +7649,6 @@
     panel.remove();curtain.remove();style.remove();esp.remove();cross.remove();flyHud.remove();v6Hud.remove();
     if(window.deathWon?.remove===remove)delete window.deathWon;
   }
-  window.deathWon={version:"18.9-VOIDWARE",gameSpeed:{get enabled(){return flags.gameSpeedHack},get rate(){return gameClockRate},get applied(){return gameClockState.requestedRate},get status(){return {...gameClockState,clockNow:gameClockNow()}},set:r=>gameClockSet(r),reset:gameClockReset},airStrafe:{get enabled(){return flags.autoStrafe},get steer(){return airSteer},get cap(){return airMaxSpeed},get horizontalSpeed(){return Math.hypot(g.player.vx||0,g.player.vz||0)},reset:()=>{airSteer=14;airMaxSpeed=11;strafeSave()}},voidChams:{settings:voidChamsCfg,save:voidChamsSave,get pending(){return voidCandidate?.name||null},get activated(){return voidReadyBot?.name||null},get meshes(){return bodyGlowMeshes.size}},radar:{aimedAt:radarCrosshairOn,elevation:radarElevationKind,coordinates:radarCoordinates,ray:radarSightRay,debug:()=>({on:flags.radar,arrows:flags.radarElevation,pulse:flags.radarAimPulse,bodyGlow:flags.aimBodyGlow,glowingMeshes:bodyGlowMeshes.size,los:flags.radarRequireLOS,corner:radarCorner,...radarStats,enemyPositions:enemyBots().slice(0,12).map(b=>({name:b.name||"Enemy",relative:radarCoordinates(b),elevation:radarElevationKind(b),crosshair:radarCrosshairOn(b)}))}),get threshold(){return radarHeightThreshold},get range(){return radarRange}},utility:{types:utilityTypes.map(t=>({id:t.id,flag:t.flag,title:t.title})),settings:utilitySettings,status:utilityStatus,refill:()=>utilityRefill(true),get live(){return {...utilityRuntime}}},v18Settings:v18,v18State,v18Render,v18Save,skinLab:{get inventory(){return sl.items.map(x=>({...x}))},get equipped(){return {...sl.equipped}},get catalogSize(){return slCatalog.length},get exterior(){return slExterior(sl.float)},add:(weapon,name,float,seed)=>slAdd(slMakeItem(weapon,name,float,seed)),equip:id=>slEquip(slFind(id)),remove:id=>slDelete(slFind(id)),preview:slPaintGame,armCase:()=>{slCaseArmed=true;return true},get caseArmed(){return slCaseArmed},get caseMode(){return slCaseMode},setCaseMode:v=>{slCaseMode=v==='reel'?'reel':'cover';sl.caseDisplayMode=slCaseMode;slSave()},get casePending(){return !!slCasePending},caseDemo:()=>slCaseStart('Arms Deal 2 Case',true,true),caseStart:()=>slCaseStart(slCaseLastTitle,false,slCaseMode==='cover'),caseClose:slCaseClose},v17Settings:v17,v17State,v17OnShot,v17OnDamage,v17ApplyAim,v17SaveAim,v17EquipLoadout,v17SaveLoadout,v17ExportConfig,v17ImportConfig,v17Cue,ragePlusDefs:ragePlusDefs.map(o=>({...o})),ragePlusCfg,ragePlusOff,get rageTargetName(){return rageFocus?.name||null;},smoothHeadFlick,get smoothFlickActive(){return !!smoothFlickJob},v16Options:v16Opts.map(o=>({id:o.flag,name:o.name,group:o.group,desc:o.desc})),v16Config:v16Cfg,v16Off,legitProOptions:legitProDefs.map(p=>({id:p.flag,name:p.name,desc:p.desc})),legitProSettings:legitProCfg,legitProState,legitProDisable,v15Powers:v15Powers.map(p=>({id:p.id,name:p.name,group:p.group,desc:p.desc})),v15Off,v14Powers:v14Catalog.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),v14Action:(id)=>{const p=v14ById.get(id);if(p?.mode==='action')v14RunPower(p);},v14Off:v14Disable,v14Settings:v14Cfg,paradox131Powers:v131Powers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradox131Action:v131Action,paradox131Off:v131Off,paradox131FusionEquip:v131EquipFusion,autoWin:paradoxAutoWin,paradoxPowers:paradoxPowers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradoxAction,paradoxOff,supernovaPowers:snPowers.map(p=>({...p})),supernovaAction:snAction,omegaPowers:omegaPowers.map(p=>({...p})),omegaAction,remove,flags,visibleHeadFlick,realityPowers:rePowers.map(p=>({...p})),realityAction:reDoAction,realityOff:reDisableAll,overdrivePowers:odPowers.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),usePower:id=>odAction(id),fpsBoost:on=>{if(!!flags.fpsBoost!==!!on)toggleFlag('fpsBoost')},open:showMenu,killBots,stopLegitLock,playKillSound:()=>playKillSound(false,true),get bindings(){return {...bindings}},setBinding,panicReset};
-  notice('VOIDWARE V18.9 loaded • Game Speed 0.0001×–1000×');
+  window.deathWon={version:"19.0-VOIDWARE",fpsBooster:{get enabled(){return flags.fpsBooster},get fps(){return fpsBoosterState.realFps},get cullingCount(){return fpsBoosterState.optimizedMeshes.size},settings:fpsBoosterCfg,get statistics(){return {realFps:fpsBoosterState.realFps,cullCandidates:fpsBoosterState.scannedMeshes,cullingCount:fpsBoosterState.optimizedMeshes.size,overlayDraws:fpsBoosterState.overlayDraws,overlaySkipped:fpsBoosterState.overlaySkipped,error:fpsBoosterState.error}},enable:()=>{flags.fpsBooster=true;fpsBoosterEnable(true)},disable:()=>{flags.fpsBooster=false;fpsBoosterEnable(false)}},gameSpeed:{get enabled(){return flags.gameSpeedHack},get rate(){return gameClockRate},get applied(){return gameClockState.requestedRate},get status(){return {...gameClockState,clockNow:gameClockNow()}},set:r=>gameClockSet(r),reset:gameClockReset},airStrafe:{get enabled(){return flags.autoStrafe},get steer(){return airSteer},get cap(){return airMaxSpeed},get horizontalSpeed(){return Math.hypot(g.player.vx||0,g.player.vz||0)},reset:()=>{airSteer=14;airMaxSpeed=11;strafeSave()}},voidChams:{settings:voidChamsCfg,save:voidChamsSave,get pending(){return voidCandidate?.name||null},get activated(){return voidReadyBot?.name||null},get meshes(){return bodyGlowMeshes.size}},radar:{aimedAt:radarCrosshairOn,elevation:radarElevationKind,coordinates:radarCoordinates,ray:radarSightRay,debug:()=>({on:flags.radar,arrows:flags.radarElevation,pulse:flags.radarAimPulse,bodyGlow:flags.aimBodyGlow,glowingMeshes:bodyGlowMeshes.size,los:flags.radarRequireLOS,corner:radarCorner,...radarStats,enemyPositions:enemyBots().slice(0,12).map(b=>({name:b.name||"Enemy",relative:radarCoordinates(b),elevation:radarElevationKind(b),crosshair:radarCrosshairOn(b)}))}),get threshold(){return radarHeightThreshold},get range(){return radarRange}},utility:{types:utilityTypes.map(t=>({id:t.id,flag:t.flag,title:t.title})),settings:utilitySettings,status:utilityStatus,refill:()=>utilityRefill(true),get live(){return {...utilityRuntime}}},v18Settings:v18,v18State,v18Render,v18Save,skinLab:{get inventory(){return sl.items.map(x=>({...x}))},get equipped(){return {...sl.equipped}},get catalogSize(){return slCatalog.length},get exterior(){return slExterior(sl.float)},add:(weapon,name,float,seed)=>slAdd(slMakeItem(weapon,name,float,seed)),equip:id=>slEquip(slFind(id)),remove:id=>slDelete(slFind(id)),preview:slPaintGame,armCase:()=>{slCaseArmed=true;return true},get caseArmed(){return slCaseArmed},get caseMode(){return slCaseMode},setCaseMode:v=>{slCaseMode=v==='reel'?'reel':'cover';sl.caseDisplayMode=slCaseMode;slSave()},get casePending(){return !!slCasePending},caseDemo:()=>slCaseStart('Arms Deal 2 Case',true,true),caseStart:()=>slCaseStart(slCaseLastTitle,false,slCaseMode==='cover'),caseClose:slCaseClose},v17Settings:v17,v17State,v17OnShot,v17OnDamage,v17ApplyAim,v17SaveAim,v17EquipLoadout,v17SaveLoadout,v17ExportConfig,v17ImportConfig,v17Cue,ragePlusDefs:ragePlusDefs.map(o=>({...o})),ragePlusCfg,ragePlusOff,get rageTargetName(){return rageFocus?.name||null;},smoothHeadFlick,get smoothFlickActive(){return !!smoothFlickJob},v16Options:v16Opts.map(o=>({id:o.flag,name:o.name,group:o.group,desc:o.desc})),v16Config:v16Cfg,v16Off,legitProOptions:legitProDefs.map(p=>({id:p.flag,name:p.name,desc:p.desc})),legitProSettings:legitProCfg,legitProState,legitProDisable,v15Powers:v15Powers.map(p=>({id:p.id,name:p.name,group:p.group,desc:p.desc})),v15Off,v14Powers:v14Catalog.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),v14Action:(id)=>{const p=v14ById.get(id);if(p?.mode==='action')v14RunPower(p);},v14Off:v14Disable,v14Settings:v14Cfg,paradox131Powers:v131Powers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradox131Action:v131Action,paradox131Off:v131Off,paradox131FusionEquip:v131EquipFusion,autoWin:paradoxAutoWin,paradoxPowers:paradoxPowers.map(p=>({id:p[0],name:p[1],mode:p[2]})),paradoxAction,paradoxOff,supernovaPowers:snPowers.map(p=>({...p})),supernovaAction:snAction,omegaPowers:omegaPowers.map(p=>({...p})),omegaAction,remove,flags,visibleHeadFlick,realityPowers:rePowers.map(p=>({...p})),realityAction:reDoAction,realityOff:reDisableAll,overdrivePowers:odPowers.map(p=>({id:p.id,name:p.name,group:p.group,mode:p.mode})),usePower:id=>odAction(id),fpsBoost:on=>{if(!!flags.fpsBoost!==!!on)toggleFlag('fpsBoost')},open:showMenu,killBots,stopLegitLock,playKillSound:()=>playKillSound(false,true),get bindings(){return {...bindings}},setBinding,panicReset};
+  notice('VOIDWARE V19.0 loaded • Full Quality FPS Booster');
 })();
